@@ -1,0 +1,180 @@
+#!/usr/bin/env node
+import os from 'node:os';
+import * as readline from 'node:readline';
+import {
+  loadConfig,
+  saveConfig,
+  configPath,
+  DEFAULT_ENDPOINT,
+  type CalcaasConfig,
+} from './config.js';
+import { fetchDailyRaw } from './ccusage.js';
+import { normalizeCcusageDaily } from './normalize.js';
+import { pushRecords } from './api.js';
+import { log, error as logError } from './log.js';
+
+type Flags = Record<string, string | boolean>;
+
+function parseArgs(argv: string[]): { cmd: string; flags: Flags } {
+  const flags: Flags = {};
+  const positionals: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith('--')) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith('--')) {
+        flags[key] = next;
+        i++;
+      } else {
+        flags[key] = true;
+      }
+    } else {
+      positionals.push(a);
+    }
+  }
+  return { cmd: positionals[0] ?? 'help', flags };
+}
+
+const str = (f: Flags, k: string): string | undefined =>
+  typeof f[k] === 'string' ? (f[k] as string) : undefined;
+
+function prompt(question: string): Promise<string> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) =>
+    rl.question(question, (ans) => {
+      rl.close();
+      resolve(ans.trim());
+    }),
+  );
+}
+
+function requireConfig(): CalcaasConfig {
+  const c = loadConfig();
+  if (!c.apiKey || !c.endpoint || !c.deviceLabel) {
+    logError('Not configured yet. Run `calcaas-sync login` first.');
+    process.exit(1);
+  }
+  return {
+    apiKey: c.apiKey,
+    endpoint: c.endpoint,
+    deviceLabel: c.deviceLabel,
+    intervalMinutes: c.intervalMinutes ?? 60,
+  };
+}
+
+async function cmdLogin(flags: Flags): Promise<void> {
+  const existing = loadConfig();
+  const apiKey = str(flags, 'key') || (await prompt('Paste your Calcaas device key (cal_live_…): '));
+  if (!apiKey.startsWith('cal_live_')) {
+    logError('That does not look like a Calcaas device key (expected cal_live_…).');
+    process.exit(1);
+  }
+  const device =
+    str(flags, 'device') ||
+    (await prompt(`Device label [${os.hostname()}]: `)) ||
+    os.hostname();
+  const endpoint = str(flags, 'endpoint') || existing.endpoint || DEFAULT_ENDPOINT;
+  const intervalMinutes = Number(str(flags, 'interval')) || existing.intervalMinutes || 60;
+
+  saveConfig({ apiKey, endpoint, deviceLabel: device, intervalMinutes });
+  log(`Saved config → ${configPath()}`);
+  log(`Device "${device}" will report to ${endpoint}`);
+  log('Next: `calcaas-sync push` for a one-off sync, or `calcaas-sync watch` to keep it updated.');
+}
+
+async function runPushOnce(cfg: CalcaasConfig, since?: string): Promise<void> {
+  let raw: unknown;
+  try {
+    raw = await fetchDailyRaw({ since });
+  } catch (e) {
+    // A bad --since shouldn't strand the sync — fall back to a full pull (the
+    // server upsert is idempotent, so re-sending old days is harmless).
+    if (since) {
+      logError(`ccusage failed with --since ${since}; retrying a full sync. (${(e as Error).message})`);
+      raw = await fetchDailyRaw({});
+    } else {
+      throw e;
+    }
+  }
+
+  const records = normalizeCcusageDaily(raw, { tool: 'claude-code' });
+  if (records.length === 0) {
+    log('No Claude Code usage found to sync.');
+    return;
+  }
+  const result = await pushRecords(records, {
+    endpoint: cfg.endpoint,
+    apiKey: cfg.apiKey,
+    deviceLabel: cfg.deviceLabel,
+  });
+  log(
+    `Synced ${records.length} record(s) in ${result.batches} batch(es): ${result.inserted} new, ${result.updated} updated.`,
+  );
+}
+
+async function cmdPush(flags: Flags): Promise<void> {
+  const cfg = requireConfig();
+  await runPushOnce(cfg, str(flags, 'since'));
+}
+
+async function cmdWatch(flags: Flags): Promise<void> {
+  const cfg = requireConfig();
+  const interval = Number(str(flags, 'interval')) || cfg.intervalMinutes || 60;
+  const since = str(flags, 'since');
+  log(`Watching — syncing every ${interval} min as device "${cfg.deviceLabel}". Ctrl+C to stop.`);
+
+  const cycle = async () => {
+    try {
+      await runPushOnce(cfg, since);
+    } catch (e) {
+      logError(`Sync cycle failed (will retry next interval): ${(e as Error).message}`);
+    }
+  };
+
+  await cycle();
+  setInterval(() => void cycle(), interval * 60 * 1000);
+}
+
+function printHelp(): void {
+  process.stdout.write(
+    `calcaas-sync — push your real AI-tool token usage to Calcaas\n\n` +
+      `Usage:\n` +
+      `  calcaas-sync login [--key cal_live_…] [--device "name"] [--endpoint URL] [--interval 60]\n` +
+      `  calcaas-sync push  [--since YYYY-MM-DD]\n` +
+      `  calcaas-sync watch [--interval 60] [--since YYYY-MM-DD]\n\n` +
+      `Commands:\n` +
+      `  login   Save your device key + label to ${configPath()}\n` +
+      `  push    Run ccusage once, normalize, and upload daily aggregates\n` +
+      `  watch   Run push now and then on an interval (default hourly)\n\n` +
+      `Privacy: only numeric daily aggregates (tokens, model name, date, cost) are\n` +
+      `uploaded. Prompt and response content never leave your machine.\n`,
+  );
+}
+
+try {
+  const { cmd, flags } = parseArgs(process.argv.slice(2));
+  switch (cmd) {
+    case 'login':
+      await cmdLogin(flags);
+      break;
+    case 'push':
+      await cmdPush(flags);
+      break;
+    case 'watch':
+      await cmdWatch(flags);
+      break;
+    case 'help':
+    case '--help':
+    case '-h':
+      printHelp();
+      break;
+    default:
+      logError(`Unknown command: ${cmd}`);
+      printHelp();
+      process.exit(1);
+  }
+} catch (e) {
+  logError((e as Error).message);
+  process.exit(1);
+}

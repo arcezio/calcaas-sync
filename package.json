@@ -1,0 +1,42 @@
+{
+  "name": "calcaas-sync",
+  "version": "0.1.0",
+  "description": "Push your real AI-tool token usage to your Calcaas dashboard. A thin, privacy-preserving wrapper around ccusage.",
+  "keywords": [
+    "claude-code",
+    "ccusage",
+    "tokens",
+    "usage",
+    "analytics",
+    "calcaas",
+    "llm",
+    "cost"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "calcaas-sync": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "ccusage": "^20.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

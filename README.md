@@ -24,8 +24,11 @@ directly.
 ## Install
 
 ```bash
-npm install -g calcaas-sync
+npm install -g github:arcezio/calcaas-sync
 ```
+
+> Installs straight from GitHub and builds on install (no npm account needed).
+> Once published to the npm registry, `npm install -g calcaas-sync` will also work.
 
 ## Usage
 

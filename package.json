@@ -1,6 +1,6 @@
 {
   "name": "calcaas-sync",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Push your real AI-tool token usage to your Calcaas dashboard. A thin, privacy-preserving wrapper around ccusage.",
   "keywords": [
     "claude-code",

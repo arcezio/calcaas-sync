@@ -9,8 +9,9 @@ import {
   type CalcaasConfig,
 } from './config.js';
 import { fetchDailyRaw } from './ccusage.js';
-import { normalizeCcusageDaily } from './normalize.js';
+import { normalizeCcusageDaily, type NormalizedRecord } from './normalize.js';
 import { pushRecords } from './api.js';
+import { detectAgents, toolLabel, SUPPORTED_AGENTS } from './agents.js';
 import { log, error as logError } from './log.js';
 
 type Flags = Record<string, string | boolean>;
@@ -84,32 +85,59 @@ async function cmdLogin(flags: Flags): Promise<void> {
 }
 
 async function runPushOnce(cfg: CalcaasConfig, since?: string): Promise<void> {
-  let raw: unknown;
+  // 1. One aggregate pass to detect which agent CLIs have data. A bad --since
+  //    shouldn't strand the sync — fall back to a full pull (idempotent upsert).
+  let agg: unknown;
   try {
-    raw = await fetchDailyRaw({ since });
+    agg = await fetchDailyRaw({ since });
   } catch (e) {
-    // A bad --since shouldn't strand the sync — fall back to a full pull (the
-    // server upsert is idempotent, so re-sending old days is harmless).
     if (since) {
       logError(`ccusage failed with --since ${since}; retrying a full sync. (${(e as Error).message})`);
-      raw = await fetchDailyRaw({});
+      since = undefined;
+      agg = await fetchDailyRaw({});
     } else {
       throw e;
     }
   }
+  const detected = detectAgents(agg);
+  // If detection finds nothing (e.g. no metadata.agents), sweep all known agents.
+  const tools = detected.length > 0 ? detected : SUPPORTED_AGENTS;
 
-  const records = normalizeCcusageDaily(raw, { tool: 'claude-code' });
+  // 2. Pull each tool's data separately and tag it — the cross-tool aggregate
+  //    collapses tools into one row, so we can't split it after the fact.
+  const records: NormalizedRecord[] = [];
+  const perTool: Record<string, number> = {};
+  for (const agent of tools) {
+    let raw: unknown;
+    try {
+      raw = await fetchDailyRaw({ since, tool: agent });
+    } catch (e) {
+      logError(`Skipping ${agent}: ${(e as Error).message}`);
+      continue;
+    }
+    const label = toolLabel(agent);
+    const recs = normalizeCcusageDaily(raw, { tool: label });
+    if (recs.length > 0) {
+      records.push(...recs);
+      perTool[label] = (perTool[label] ?? 0) + recs.length;
+    }
+  }
+
   if (records.length === 0) {
-    log('No Claude Code usage found to sync.');
+    log('No usage found to sync.');
     return;
   }
+
   const result = await pushRecords(records, {
     endpoint: cfg.endpoint,
     apiKey: cfg.apiKey,
     deviceLabel: cfg.deviceLabel,
   });
+  const toolSummary = Object.entries(perTool)
+    .map(([t, n]) => `${t} (${n})`)
+    .join(', ');
   log(
-    `Synced ${records.length} record(s) in ${result.batches} batch(es): ${result.inserted} new, ${result.updated} updated.`,
+    `Synced ${records.length} record(s) across ${Object.keys(perTool).length} tool(s) [${toolSummary}]: ${result.inserted} new, ${result.updated} updated.`,
   );
 }
 

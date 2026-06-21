@@ -13,8 +13,9 @@ you get a cloud dashboard of your usage **per tool, per model, per device, over 
 ## Prerequisites
 
 - **Node.js 20+** (ccusage's floor).
-- A tool ccusage understands has been used on this machine — for the MVP that's
-  **Claude Code** (it reads `~/.claude/projects/**/*.jsonl`).
+- A coding-agent CLI that ccusage understands has been used on this machine —
+  **Claude Code**, **Codex**, **Gemini CLI**, **GitHub Copilot CLI**, **OpenCode**, and more.
+  calcaas-sync auto-detects whichever ones you use and tags each row by tool.
 - A **Calcaas device key** — generate one in the Calcaas app under **Usage Analytics →
   Connect a device** (it looks like `cal_live_…`). The key is shown once; copy it then.
 
@@ -115,13 +116,13 @@ with its device, so the dashboard breaks usage down per machine.
 ## How it works
 
 ```
-~/.claude/**/*.jsonl ──▶ ccusage daily --json ──▶ normalize ──▶ POST /usage-ingest ──▶ Calcaas
-   (your machine)          (bundled, local)      (numeric only)   (Bearer cal_live_…)   (dashboard)
+agent CLIs' local logs ──▶ ccusage <tool> daily --json ──▶ normalize ──▶ POST /usage-ingest ──▶ Calcaas
+   (your machine)              (bundled, local)           (numeric only)   (Bearer cal_live_…)   (dashboard)
 ```
 
-`calcaas-sync` spawns the bundled ccusage binary (`ccusage daily --json`), maps each
-`(date × model)` entry to the Calcaas wire contract, and POSTs batched aggregates with your
-key in the `Authorization` header.
+`calcaas-sync` runs the bundled ccusage to detect which agent CLIs have data, then pulls each
+tool's `<tool> daily --json` separately, maps every `(tool × date × model)` entry to the
+Calcaas wire contract, and POSTs batched aggregates with your key in the `Authorization` header.
 
 ## Development
 

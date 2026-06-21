@@ -25,6 +25,8 @@ function resolveCcusageBin(): string {
 export interface FetchDailyOptions {
   /** Inclusive lower bound as YYYY-MM-DD (converted to ccusage's YYYYMMDD). */
   since?: string;
+  /** ccusage agent subcommand (e.g. 'claude', 'codex'). Omit for the cross-tool aggregate. */
+  tool?: string;
 }
 
 function toCompactDate(d: string): string {
@@ -33,7 +35,9 @@ function toCompactDate(d: string): string {
 
 export async function fetchDailyRaw(options: FetchDailyOptions = {}): Promise<unknown> {
   const bin = resolveCcusageBin();
-  const args = [bin, 'daily', '--json'];
+  // `<agent> daily --json` for a specific tool; bare `daily --json` for the
+  // cross-tool aggregate (used only to detect which agents have data).
+  const args = options.tool ? [bin, options.tool, 'daily', '--json'] : [bin, 'daily', '--json'];
   if (options.since) args.push('--since', toCompactDate(options.since));
   return runJson(process.execPath, args);
 }

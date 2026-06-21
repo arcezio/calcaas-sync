@@ -12,7 +12,14 @@ import { fetchDailyRaw } from './ccusage.js';
 import { normalizeCcusageDaily, type NormalizedRecord } from './normalize.js';
 import { pushRecords } from './api.js';
 import { detectAgents, toolLabel, SUPPORTED_AGENTS } from './agents.js';
-import { log, error as logError } from './log.js';
+import { log, error as logError, logPath } from './log.js';
+import {
+  enableAutostart,
+  disableAutostart,
+  autostartTarget,
+  startWatchDetached,
+} from './autostart.js';
+import fs from 'node:fs';
 
 type Flags = Record<string, string | boolean>;
 
@@ -164,17 +171,58 @@ async function cmdWatch(flags: Flags): Promise<void> {
   setInterval(() => void cycle(), interval * 60 * 1000);
 }
 
+function cmdEnable(): void {
+  // Require config up front — autostart is pointless without a device key.
+  requireConfig();
+  const target = enableAutostart();
+  log(`Autostart enabled → ${target}`);
+  log('calcaas-sync will now launch hidden at every login and sync in the background.');
+  // Don't make the user wait for the next reboot — start the hidden watcher now.
+  startWatchDetached();
+  log(`Watcher started in the background. Logs: ${logPath()}`);
+}
+
+function cmdDisable(): void {
+  const removed = disableAutostart();
+  const target = autostartTarget();
+  if (removed) {
+    log(`Autostart disabled (removed ${target}).`);
+  } else {
+    log('Autostart was not enabled — nothing to remove.');
+  }
+  log('A watcher already running in the background keeps going until reboot or you end the process.');
+}
+
+function cmdStatus(): void {
+  const cfg = loadConfig();
+  log(`Config:    ${configPath()}${cfg.apiKey ? '' : ' (not configured — run `login`)'}`);
+  if (cfg.deviceLabel) log(`Device:    ${cfg.deviceLabel}`);
+  if (cfg.endpoint) log(`Endpoint:  ${cfg.endpoint}`);
+  const target = autostartTarget();
+  if (!target) {
+    log('Autostart: not supported on this platform (see README for pm2 / launchd / systemd).');
+  } else {
+    const on = fs.existsSync(target);
+    log(`Autostart: ${on ? 'ENABLED' : 'disabled'} (${target})`);
+  }
+  log(`Log file:  ${logPath()}`);
+}
+
 function printHelp(): void {
   process.stdout.write(
     `calcaas-sync — push your real AI-tool token usage to Calcaas\n\n` +
       `Usage:\n` +
       `  calcaas-sync login [--key cal_live_…] [--device "name"] [--endpoint URL] [--interval 60]\n` +
       `  calcaas-sync push  [--since YYYY-MM-DD]\n` +
-      `  calcaas-sync watch [--interval 60] [--since YYYY-MM-DD]\n\n` +
+      `  calcaas-sync watch [--interval 60] [--since YYYY-MM-DD]\n` +
+      `  calcaas-sync enable | disable | status\n\n` +
       `Commands:\n` +
-      `  login   Save your device key + label to ${configPath()}\n` +
-      `  push    Run ccusage once, normalize, and upload daily aggregates\n` +
-      `  watch   Run push now and then on an interval (default hourly)\n\n` +
+      `  login    Save your device key + label to ${configPath()}\n` +
+      `  push     Run ccusage once, normalize, and upload daily aggregates\n` +
+      `  watch    Run push now and then on an interval (default hourly)\n` +
+      `  enable   Auto-start a hidden background watcher at every login (survives reboot)\n` +
+      `  disable  Remove the autostart entry\n` +
+      `  status   Show config, autostart state, and log-file location\n\n` +
       `Privacy: only numeric daily aggregates (tokens, model name, date, cost) are\n` +
       `uploaded. Prompt and response content never leave your machine.\n`,
   );
@@ -191,6 +239,15 @@ try {
       break;
     case 'watch':
       await cmdWatch(flags);
+      break;
+    case 'enable':
+      cmdEnable();
+      break;
+    case 'disable':
+      cmdDisable();
+      break;
+    case 'status':
+      cmdStatus();
       break;
     case 'help':
     case '--help':

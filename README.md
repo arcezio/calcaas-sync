@@ -73,7 +73,34 @@ calcaas-sync watch --interval 30
 Re-syncing is **idempotent** — the server upserts on
 `(tool, model, date, device)`, so running `push`/`watch` repeatedly never creates duplicates.
 
-## Running `watch` as a background service
+### 3. Auto-start at login (recommended)
+
+Run the syncer automatically in the background — no terminal window, survives reboots:
+
+```bash
+calcaas-sync enable      # register autostart + start the hidden watcher now
+calcaas-sync status      # show config + whether autostart is on
+calcaas-sync disable     # turn it back off
+```
+
+On **Windows**, `enable` drops a tiny launcher in your Startup folder
+(`…\Start Menu\Programs\Startup\calcaas-sync.vbs`) that starts `calcaas-sync watch`
+**hidden** (no console window) at every login, and also starts it immediately so you don't
+have to wait for the next reboot. It keeps syncing hourly in the background.
+
+Because there's no visible window, output is written to a log file you can tail anytime:
+
+```
+~/.calcaas/calcaas-sync.log
+```
+
+> `enable` requires you to have run `login` first. To stop it, run `calcaas-sync disable`
+> (removes the autostart entry; a watcher already running keeps going until the next reboot
+> or until you end the `node` process).
+
+## Running `watch` as a background service (other platforms / manual setups)
+
+`calcaas-sync enable` is Windows-only. On Linux/macOS, or if you'd rather wire it up yourself:
 
 **Linux/macOS (pm2):**
 
@@ -93,8 +120,10 @@ nohup calcaas-sync watch > ~/.calcaas/sync.log 2>&1 &
 `ProgramArguments` of `[ "calcaas-sync", "watch" ]` and `RunAtLoad = true`, then
 `launchctl load` it.
 
-**Windows (Task Scheduler):** create a Basic Task, trigger **At log on**, action **Start a
-program** → `calcaas-sync` with argument `watch`.
+**Windows (Task Scheduler, manual alternative to `enable`):** create a Basic Task, trigger
+**At log on**, action **Start a program** → `calcaas-sync` with argument `watch`. (Prefer
+`calcaas-sync enable` — it runs hidden with no console window; a raw Task Scheduler action
+flashes one.)
 
 For cron-style setups, schedule `calcaas-sync push` instead (e.g. hourly) and skip `watch`.
 

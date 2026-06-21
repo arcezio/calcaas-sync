@@ -25,12 +25,11 @@ directly.
 ## Install
 
 ```bash
-npm install -g github:arcezio/calcaas-sync
+npm install -g calcaas-sync
 ```
 
-> Installs straight from GitHub using the prebuilt `dist/` — no build step, toolchain,
-> or npm account needed. Once published to the npm registry, `npm install -g calcaas-sync`
-> will also work.
+> Or install straight from GitHub (latest `main`, prebuilt `dist/`):
+> `npm install -g github:arcezio/calcaas-sync`
 
 ## Usage
 
@@ -161,6 +160,29 @@ npm run dev -- push      # run from source via tsx
 npm test                 # vitest (normalizer unit tests)
 npm run build            # tsc → dist/
 ```
+
+## Releasing (npm stays in sync with GitHub)
+
+Publishing is automated by [`.github/workflows/publish.yml`](.github/workflows/publish.yml):
+**push a `v*` git tag and that version goes to npm** (build → test → `npm publish`
+with provenance). The tag must match `version` in `package.json`, or the job fails.
+
+One-time setup:
+
+1. Create an npm **automation** access token (npmjs.com → Access Tokens → Generate →
+   *Automation*).
+2. Add it to the repo as a secret named `NPM_TOKEN`
+   (`gh secret set NPM_TOKEN`, or GitHub → Settings → Secrets → Actions).
+
+Each release:
+
+```bash
+npm version patch        # or minor / major — bumps package.json + makes a git tag
+git push --follow-tags   # pushes the commit and the tag → workflow publishes to npm
+```
+
+(You can also trigger the workflow manually from the **Actions** tab via
+`workflow_dispatch` — it publishes whatever version is in `package.json`.)
 
 ## License
 
